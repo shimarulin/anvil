@@ -15,18 +15,16 @@ def process_markdown(content: str, filename: str = "<stdin>") -> tuple[str, list
     logs = []
     i = 0
 
-    # Заголовок с путём: ### `some/path/file.ext`
-    # Допускаем пробелы в конце, \r и т.д.
-    header_pattern = re.compile(r'^(#{1,6})\s+`([^`]+)`\s*$')
+    # Заголовок с путём: ### `some/path/file.ext` с возможным текстом после
+    header_pattern = re.compile(r'^(#{1,6})\s+`([^`]+)`.*$')
 
-    # Блок кода — допускаем пробелы/\r в конце
+    # Блок кода
     code_fence_pattern = re.compile(r'^```\s*(\S*)\s*$')
 
     # Существующий комментарий file:
     file_comment_pattern = re.compile(r'^<!--\s*file:\s*(.+?)\s*-->$')
 
     while i < len(lines):
-        # Убираем \r для корректного матчинга, но сохраняем оригинал
         line_raw = lines[i]
         line = line_raw.rstrip('\r')
 
@@ -80,7 +78,6 @@ def process_markdown(content: str, filename: str = "<stdin>") -> tuple[str, list
                     i += 1
                 else:
                     # Между заголовком и кодом может быть пустая строка
-                    # Проверяем через одну строку
                     if next_line.strip() == '' and (i + 1) < len(lines):
                         after_raw = lines[i + 1]
                         after_line = after_raw.rstrip('\r')
@@ -117,7 +114,6 @@ def process_file(filepath: str, dry_run: bool = False) -> list[str]:
     new_content, logs = process_markdown(content, filepath)
 
     if not logs:
-        # Диагностика: показать сколько заголовков с бэктиками вообще найдено
         header_count = len(re.findall(
             r'^#{1,6}\s+`[^`]+`', content, re.MULTILINE
         ))
