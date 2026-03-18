@@ -158,6 +158,96 @@ pkg_bin() {
 }
 
 # ============================================================
+#  Resolve the correct shell config file for PATH export
+#
+#  zsh:  ALWAYS ~/.zshenv — this is the only file zsh reads
+#        unconditionally from $HOME before $ZDOTDIR takes effect.
+#        $ZDOTDIR/.zshenv is NEVER re-read by zsh.
+#        See: man zshall → "STARTUP/SHUTDOWN FILES"
+#
+#  bash: ~/.bash_profile on macOS, ~/.bashrc on Linux.
+#  fish: ~/.config/fish/config.fish
+# ============================================================
+detect_shell_rc() {
+    _SHELL_RC=""
+    _EXPORT_LINE='export PATH="$HOME/.local/bin:$PATH"'
+
+    if [[ "$SHELL" == */zsh ]]; then
+        # Always ~/.zshenv — zsh hardcodes this path.
+        # $ZDOTDIR only affects .zshrc, .zprofile, .zlogin — NOT .zshenv.
+        _SHELL_RC="$HOME/.zshenv"
+
+    elif [[ "$SHELL" == */bash ]]; then
+        if [[ "$OS" == "macos" ]]; then
+            _SHELL_RC="$HOME/.bash_profile"
+        else
+            _SHELL_RC="$HOME/.bashrc"
+        fi
+
+    elif [[ "$SHELL" == */fish ]]; then
+        _SHELL_RC="$HOME/.config/fish/config.fish"
+        _EXPORT_LINE='fish_add_path "$HOME/.local/bin"'
+    fi
+}
+
+# ============================================================
+#  Ensure ~/.local/bin is in PATH
+# ============================================================
+ensure_local_bin_in_path() {
+    local local_bin="$HOME/.local/bin"
+    mkdir -p "$local_bin"
+
+    # Already in PATH — nothing to do
+    if echo "$PATH" | tr ':' '\n' | grep -qx "$local_bin"; then
+        ok "\$HOME/.local/bin is already in \$PATH"
+        return 0
+    fi
+
+    echo ""
+    warn "\$HOME/.local/bin is NOT in your \$PATH"
+    info "Some installed tools (tree-sitter, Python packages) live there."
+    echo ""
+
+    detect_shell_rc
+    local shell_rc="$_SHELL_RC"
+    local export_line="$_EXPORT_LINE"
+
+    if [[ -z "$shell_rc" ]]; then
+        warn "Unknown shell: ${SHELL}. Add this to your shell profile manually:"
+        echo -e "  ${GREEN}${export_line}${NC}"
+        return 0
+    fi
+
+    echo -e -n "  Add ${GREEN}${export_line}${NC}\n  to ${CYAN}${shell_rc}${NC}? [y/N] "
+    read -r answer
+
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        # Don't duplicate if already present but not yet sourced
+        if grep -qF '.local/bin' "$shell_rc" 2>/dev/null; then
+            ok "Line already exists in ${shell_rc} (restart your terminal to activate)"
+            return 0
+        fi
+
+        # Create the file if it doesn't exist yet
+        mkdir -p "$(dirname "$shell_rc")"
+        [[ -f "$shell_rc" ]] || touch "$shell_rc"
+
+        echo "" >> "$shell_rc"
+        echo "# Added by Neovim install script" >> "$shell_rc"
+        echo "$export_line" >> "$shell_rc"
+
+        ok "Added to ${shell_rc}"
+        info "Run ${CYAN}source ${shell_rc}${NC} or restart your terminal to activate"
+
+        # Also export for the current session
+        export PATH="$local_bin:$PATH"
+    else
+        info "Skipped. Add it manually later:"
+        echo -e "  ${GREEN}${export_line}${NC}"
+    fi
+}
+
+# ============================================================
 #  System packages
 # ============================================================
 install_system_packages() {
@@ -220,7 +310,6 @@ install_neovim() {
             ;;
     esac
 
-    # Verify minimum version 0.11
     if has nvim; then
         local ver minor
         ver="$(nvim --version | head -1)"
@@ -433,8 +522,6 @@ install_pip_packages() {
 
     if is_externally_managed; then
         info "Packages installed in venv: ${VENV_DIR}"
-        info "Binaries symlinked to ~/.local/bin"
-        echo -e "  ${YELLOW}Make sure ${GREEN}\$HOME/.local/bin${YELLOW} is in your \$PATH${NC}"
     fi
 
     configure_nvim_python
@@ -454,8 +541,6 @@ configure_nvim_python() {
 
     section "Neovim Python provider"
 
-    # Global plugin loaded by every Neovim config automatically
-    # ~/.local/share/nvim/site/plugin/ is always in runtimepath
     local plugin_dir="$HOME/.local/share/nvim/site/plugin"
     local plugin_file="${plugin_dir}/python3_host.lua"
 
@@ -557,6 +642,7 @@ main() {
     install_system_packages
     install_neovim
     install_nerd_font
+    ensure_local_bin_in_path
     install_npm_packages
     install_pip_packages
 
