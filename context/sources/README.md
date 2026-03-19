@@ -4,7 +4,7 @@ This directory contains generated Markdown documents with project source code fo
 
 ## Using merge_to_markdown.py Script
 
-The `tools/merge_to_markdown.py` script merges the contents of multiple files into a single Markdown document according to the File Output Format rules.
+The `@/tools/merge_to_markdown.py` script merges the contents of multiple files into a single Markdown document according to the File Output Format rules (see [@/context/rules/01.00_Markdown_format.md](../rules/01.00_Markdown_format.md)).
 
 ### Basic Usage
 

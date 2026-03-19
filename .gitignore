@@ -18,3 +18,7 @@ src/*/lua/local_*.lua
 # Context files for LLM (may contain duplicate code)
 context/sources/*
 !context/sources/README.md
+
+# Output directory for LLM responses (ignore everything except README.md)
+context/output/*
+!context/output/README.md
