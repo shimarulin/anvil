@@ -1,1 +1,16 @@
+# Neovim
+.netrwhist
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local overrides (user can create these for machine-specific config)
+src/*/lua/local_*.lua
