@@ -20,37 +20,59 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+# ── Данные ────────────────────────────────────────────────────────────────
+
+
 @dataclass
 class ExtractedFile:
     """Один извлечённый файл."""
+
     path: str
     language: str
     content: str
-    line_number: int  # строка маркера в исходном .md
+    line_number: int  # строка маркера в исходном .md (1-based)
 
 
 @dataclass
 class ParseResult:
     """Результат парсинга Markdown-документа."""
+
     files: list[ExtractedFile] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
-# ── Регулярные выражения ────────────────────────────────────────────────────
+# ── Регулярные выражения ──────────────────────────────────────────────────
 
+# Маркер: <!-- file: some/path.ext -->
+# Допускаем пробелы внутри комментария и необязательный / в начале пути.
 MARKER_RE = re.compile(
     r"^\s*<!--\s*file:\s*(?P<path>.+?)\s*-->\s*$"
 )
 
+# Открывающее ограждение: 3+ бэктиков, опционально язык.
 FENCE_OPEN_RE = re.compile(
-    r"^(?P<fence>`{3,})(?P<lang>[a-zA-Z0-9_.*+-]*)\s*$"
+    r"^(?P<fence>`{3,})(?P<lang>[^\s`]*)\s*$"
 )
+
+
+# ── Парсер ────────────────────────────────────────────────────────────────
 
 
 def parse_markdown(text: str) -> ParseResult:
     """
     Парсит Markdown-текст и извлекает все файлы, помеченные маркером
-    <!-- file: path --> непосредственно перед code-блоком.
+    ``<!-- file: path -->`` непосредственно перед code-блоком.
+
+    Содержимое code-блока извлекается **побайтово как есть** — никакие
+    символы (включая ``$``, ``$$``, обратные слэши и т.д.) не
+    трансформируются.
+
+    Алгоритм:
+    1. Ищем строку с маркером ``<!-- file: path -->``
+    2. Следующая непустая строка должна быть открывающим ограждением
+    3. Читаем содержимое до закрывающего ограждения той же (или большей)
+       длины
+    4. Сохраняем результат
     """
     result = ParseResult()
     lines = text.splitlines()
@@ -60,15 +82,16 @@ def parse_markdown(text: str) -> ParseResult:
     while i < total:
         line = lines[i]
 
+        # ── 1. Ищем маркер ────────────────────────────────────────────
         marker_match = MARKER_RE.match(line)
         if not marker_match:
             i += 1
             continue
 
         file_path = marker_match.group("path").strip()
-        marker_line = i + 1  # 1-based
+        marker_line = i + 1  # 1-based для сообщений
 
-        # Пропускаем пустые строки между маркером и ограждением
+        # ── 2. Пропускаем пустые строки между маркером и ограждением ──
         j = i + 1
         while j < total and lines[j].strip() == "":
             j += 1
@@ -81,6 +104,7 @@ def parse_markdown(text: str) -> ParseResult:
             i = j
             continue
 
+        # ── 3. Проверяем открывающее ограждение ───────────────────────
         fence_match = FENCE_OPEN_RE.match(lines[j])
         if not fence_match:
             result.errors.append(
@@ -90,19 +114,28 @@ def parse_markdown(text: str) -> ParseResult:
             i = j + 1
             continue
 
-        fence_str = fence_match.group("fence")
+        fence_str = fence_match.group("fence")   # например ``` или ````
         lang = fence_match.group("lang") or ""
         fence_len = len(fence_str)
 
+        # ── 4. Читаем содержимое до закрывающего ограждения ───────────
+        #
+        #  ВАЖНО: строки добавляются в список без какой-либо обработки.
+        #  Никакие символы не заменяются и не экранируются.
+        #
         content_lines: list[str] = []
         k = j + 1
         found_close = False
 
+        # Закрывающее ограждение: >= fence_len бэктиков, ничего после
+        # (кроме пробелов).
+        close_re = re.compile(r"^`{" + str(fence_len) + r",}\s*$")
+
         while k < total:
-            close_match = re.match(r"^(`{" + str(fence_len) + r",})\s*$", lines[k])
-            if close_match:
+            if close_re.match(lines[k]):
                 found_close = True
                 break
+            # Строка добавляется КАК ЕСТЬ — без изменений.
             content_lines.append(lines[k])
             k += 1
 
@@ -114,29 +147,43 @@ def parse_markdown(text: str) -> ParseResult:
             i = k
             continue
 
+        # ── 5. Собираем содержимое ────────────────────────────────────
+        #
+        #  Используем "\n".join — это обратная операция к splitlines().
+        #  Добавляем завершающий \n, чтобы файл заканчивался переводом
+        #  строки (стандартное поведение текстовых файлов).
+        #
         content = "\n".join(content_lines)
         if content and not content.endswith("\n"):
             content += "\n"
+        # Полностью пустой блок → пустой файл
         if not content.strip():
             content = ""
 
-        result.files.append(ExtractedFile(
-            path=file_path,
-            language=lang,
-            content=content,
-            line_number=marker_line,
-        ))
+        result.files.append(
+            ExtractedFile(
+                path=file_path,
+                language=lang,
+                content=content,
+                line_number=marker_line,
+            )
+        )
 
+        # Переходим за закрывающее ограждение
         i = k + 1
 
     return result
 
 
+# ── Безопасность путей ────────────────────────────────────────────────────
+
+
 def sanitize_path(raw_path: str) -> Path:
     """
     Очищает путь от опасных компонентов:
-    - Убирает ведущий /
-    - Запрещает .. (выход за пределы целевой директории)
+    - Убирает ведущий ``/``
+    - Запрещает ``..`` (выход за пределы целевой директории)
+    - Нормализует разделители
     """
     cleaned = raw_path.replace("\\", "/").lstrip("/")
 
@@ -153,18 +200,28 @@ def sanitize_path(raw_path: str) -> Path:
     return Path(cleaned)
 
 
+# ── Интерактивный запрос ──────────────────────────────────────────────────
+
+
 def ask_overwrite(path: Path) -> bool:
     """
     Спрашивает пользователя, перезаписать ли существующий файл.
     Поддерживает ответы: y/yes/д/да — перезаписать, остальное — пропустить.
     """
     try:
-        answer = input(f"⚠  Файл «{path}» уже существует. Перезаписать? [y/N]: ").strip().lower()
+        answer = (
+            input(f"⚠  Файл «{path}» уже существует. Перезаписать? [y/N]: ")
+            .strip()
+            .lower()
+        )
     except EOFError:
         # stdin закрыт (пайплайн) — не перезаписываем
         return False
 
     return answer in ("y", "yes", "д", "да")
+
+
+# ── Извлечение на диск ───────────────────────────────────────────────────
 
 
 def extract_files(
@@ -178,10 +235,10 @@ def extract_files(
     Записывает извлечённые файлы на диск.
 
     Логика для существующих файлов:
-    - --overwrite: перезаписать все без вопросов
+    - ``--overwrite``: перезаписать все без вопросов
     - иначе: спросить пользователя для каждого файла
 
-    Возвращает (created, overwritten, skipped).
+    Возвращает ``(created, overwritten, skipped)``.
     """
     created = 0
     overwritten = 0
@@ -197,7 +254,7 @@ def extract_files(
 
         target = output_dir / rel_path
 
-        # Файл уже существует
+        # ── Файл уже существует ──────────────────────────────────────
         if target.exists():
             if dry_run:
                 print(f"🔍 [перезапись] {target}")
@@ -205,22 +262,20 @@ def extract_files(
                 continue
 
             if not overwrite:
-                # Интерактивный запрос
                 if not ask_overwrite(target):
                     if verbose:
                         print(f"⏭  Пропущен:    {target}")
                     skipped += 1
                     continue
 
-            # Перезаписываем
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(ef.content, encoding="utf-8")
             overwritten += 1
             if verbose:
                 print(f"🔄 Перезаписан: {target}")
 
+        # ── Файл не существует — создаём ─────────────────────────────
         else:
-            # Файл не существует — создаём
             if dry_run:
                 print(f"🔍 [создание]   {target}")
                 created += 1
@@ -233,6 +288,9 @@ def extract_files(
                 print(f"✅ Создан:      {target}")
 
     return created, overwritten, skipped
+
+
+# ── Вывод ─────────────────────────────────────────────────────────────────
 
 
 def print_summary(
@@ -272,7 +330,9 @@ def list_files(result: ParseResult) -> None:
     for ef in result.files:
         size = len(ef.content.encode("utf-8"))
         lang_info = f" [{ef.language}]" if ef.language else ""
-        print(f"   {ef.path}{lang_info}  ({size} байт, строка {ef.line_number})")
+        print(
+            f"   {ef.path}{lang_info}  ({size} байт, строка {ef.line_number})"
+        )
 
     if result.errors:
         print()
@@ -281,23 +341,29 @@ def list_files(result: ParseResult) -> None:
             print(f"   • {err}")
 
 
+# ── CLI ───────────────────────────────────────────────────────────────────
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Извлекает файлы из Markdown-документа (формат File Output Format).",
+        description=(
+            "Извлекает файлы из Markdown-документа "
+            "(формат File Output Format)."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog="""\
 Примеры:
-  %(prog)s project.md                        # извлечь в текущую директорию
-  %(prog)s project.md -o output/             # извлечь в указанную директорию
-  %(prog)s project.md --overwrite            # перезаписывать все без вопросов
-  %(prog)s project.md --dry-run              # показать что будет сделано
-  %(prog)s project.md --list                 # только показать список файлов
-  cat project.md | %(prog)s -                # читать из stdin
+  %(prog)s project.md                # извлечь в текущую директорию
+  %(prog)s project.md -o output/     # извлечь в указанную директорию
+  %(prog)s project.md --overwrite    # перезаписывать все без вопросов
+  %(prog)s project.md --dry-run      # показать что будет сделано
+  %(prog)s project.md --list         # только показать список файлов
+  cat project.md | %(prog)s -        # читать из stdin
 
 Поведение при существующих файлах:
   По умолчанию скрипт спрашивает для каждого файла: перезаписать или нет.
   Флаг --overwrite перезаписывает все файлы без вопросов.
-        """,
+""",
     )
 
     parser.add_argument(
@@ -305,7 +371,8 @@ def main() -> None:
         help="Входной Markdown-файл (или '-' для stdin)",
     )
     parser.add_argument(
-        "-o", "--output-dir",
+        "-o",
+        "--output-dir",
         type=Path,
         default=Path("."),
         help="Целевая директория для извлечения (по умолчанию — текущая)",
@@ -327,14 +394,15 @@ def main() -> None:
         help="Только вывести список найденных файлов",
     )
     parser.add_argument(
-        "-q", "--quiet",
+        "-q",
+        "--quiet",
         action="store_true",
         help="Минимальный вывод (только запросы на перезапись, ошибки и итог)",
     )
 
     args = parser.parse_args()
 
-    # Читаем входной документ
+    # ── Читаем входной документ ───────────────────────────────────────
     if args.input == "-":
         text = sys.stdin.read()
     else:
@@ -344,19 +412,22 @@ def main() -> None:
             sys.exit(1)
         text = input_path.read_text(encoding="utf-8")
 
-    # Парсим
+    # ── Парсим ────────────────────────────────────────────────────────
     result = parse_markdown(text)
 
     if not result.files and not result.errors:
-        print("❌ В документе не найдено ни одного маркера <!-- file: ... -->")
+        print(
+            "❌ В документе не найдено ни одного маркера "
+            "<!-- file: ... -->"
+        )
         sys.exit(1)
 
-    # Режим списка
+    # ── Режим списка ──────────────────────────────────────────────────
     if args.list_only:
         list_files(result)
         sys.exit(0)
 
-    # Извлекаем
+    # ── Извлекаем ─────────────────────────────────────────────────────
     created, overwritten, skipped = extract_files(
         result=result,
         output_dir=args.output_dir,
@@ -365,7 +436,7 @@ def main() -> None:
         verbose=not args.quiet,
     )
 
-    # Сводка
+    # ── Сводка ────────────────────────────────────────────────────────
     if not args.quiet:
         print_summary(result, created, overwritten, skipped, args.dry_run)
 
