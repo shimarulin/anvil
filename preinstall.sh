@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 # ============================================================
-#  Colors
+# Colors
 # ============================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -13,14 +12,14 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-info()    { echo -e "${BLUE}[INFO]${NC}    $*"; }
-ok()      { echo -e "${GREEN}[OK]${NC}      $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}    $*"; }
-err()     { echo -e "${RED}[ERROR]${NC}   $*"; exit 1; }
+info()    { echo -e "${BLUE}[INFO]${NC} $*"; }
+ok()      { echo -e "${GREEN}[OK]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
+err()     { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 section() { echo -e "\n${CYAN}${BOLD}── $* ──${NC}"; }
 
 # ============================================================
-#  Configuration — edit these arrays to add/remove packages
+# Configuration — edit these arrays to add/remove packages
 # ============================================================
 
 SYSTEM_PACKAGES=(
@@ -32,10 +31,23 @@ SYSTEM_PACKAGES=(
     ripgrep
 )
 
-# Format: "apt|brew|pacman|dnf"  ("-" = same as apt)
+# Format: "apt|brew|pacman|dnf" ("-" = same as apt)
 MAPPED_PACKAGES=(
     "build-essential|gcc|base-devel|gcc"
+    "fd-find|fd|fd|fd-find"
 )
+
+# Clipboard tools — platform-dependent, handled separately
+# (see install_clipboard_tool)
+
+# Optional AstroNvim tools
+OPTIONAL_PACKAGES=(
+    lazygit
+    bottom
+)
+
+# gdu has different package names across distros
+# (see install_optional_packages)
 
 NPM_PACKAGES=(
     tree-sitter-cli
@@ -55,14 +67,14 @@ NERD_FONT="JetBrainsMono"
 VENV_DIR="$HOME/.local/share/nvim-deps-venv"
 
 # ============================================================
-#  OS / Package manager detection
+# OS / Package manager detection
 # ============================================================
 OS=""
 PKG=""
 
 detect_os() {
     case "$(uname -s)" in
-        Linux*)
+        Linux)
             OS="linux"
             if   command -v apt-get &>/dev/null; then PKG="apt"
             elif command -v dnf     &>/dev/null; then PKG="dnf"
@@ -70,9 +82,10 @@ detect_os() {
             elif command -v pacman  &>/dev/null; then PKG="pacman"
             elif command -v zypper  &>/dev/null; then PKG="zypper"
             elif command -v apk     &>/dev/null; then PKG="apk"
-            else err "Could not detect Linux package manager"; fi
+            else err "Could not detect Linux package manager"
+            fi
             ;;
-        Darwin*)
+        Darwin)
             OS="macos"
             if ! command -v brew &>/dev/null; then
                 warn "Homebrew not found — installing..."
@@ -88,7 +101,7 @@ detect_os() {
 }
 
 # ============================================================
-#  Low-level helpers
+# Low-level helpers
 # ============================================================
 has() { command -v "$1" &>/dev/null; }
 
@@ -153,6 +166,9 @@ pkg_bin() {
         build-essential)  echo "gcc" ;;
         base-devel)       echo "gcc" ;;
         tree-sitter-cli)  echo "tree-sitter" ;;
+        fd-find)          echo "fd" ;;
+        fd)               echo "fd" ;;
+        bottom)           echo "btm" ;;
         *)                echo "$1" ;;
     esac
 }
@@ -176,14 +192,12 @@ detect_shell_rc() {
         # Always ~/.zshenv — zsh hardcodes this path.
         # $ZDOTDIR only affects .zshrc, .zprofile, .zlogin — NOT .zshenv.
         _SHELL_RC="$HOME/.zshenv"
-
     elif [[ "$SHELL" == */bash ]]; then
         if [[ "$OS" == "macos" ]]; then
             _SHELL_RC="$HOME/.bash_profile"
         else
             _SHELL_RC="$HOME/.bashrc"
         fi
-
     elif [[ "$SHELL" == */fish ]]; then
         _SHELL_RC="$HOME/.config/fish/config.fish"
         _EXPORT_LINE='fish_add_path "$HOME/.local/bin"'
@@ -191,13 +205,12 @@ detect_shell_rc() {
 }
 
 # ============================================================
-#  Ensure ~/.local/bin is in PATH
+# Ensure ~/.local/bin is in PATH
 # ============================================================
 ensure_local_bin_in_path() {
     local local_bin="$HOME/.local/bin"
     mkdir -p "$local_bin"
 
-    # Already in PATH — nothing to do
     if echo "$PATH" | tr ':' '\n' | grep -qx "$local_bin"; then
         ok "\$HOME/.local/bin is already in \$PATH"
         return 0
@@ -228,7 +241,6 @@ ensure_local_bin_in_path() {
             return 0
         fi
 
-        # Create the file if it doesn't exist yet
         mkdir -p "$(dirname "$shell_rc")"
         [[ -f "$shell_rc" ]] || touch "$shell_rc"
 
@@ -238,8 +250,6 @@ ensure_local_bin_in_path() {
 
         ok "Added to ${shell_rc}"
         info "Run ${CYAN}source ${shell_rc}${NC} or restart your terminal to activate"
-
-        # Also export for the current session
         export PATH="$local_bin:$PATH"
     else
         info "Skipped. Add it manually later:"
@@ -248,7 +258,26 @@ ensure_local_bin_in_path() {
 }
 
 # ============================================================
-#  System packages
+# Nerd Font hint
+# ============================================================
+nerd_font_hint() {
+    echo ""
+    echo -e " ${YELLOW}${BOLD}⚠ Set your terminal font manually:${NC}"
+    echo -e "   ${GREEN}${NERD_FONT} Nerd Font${NC}      ← correct (full-size icons)"
+    echo -e "   ${RED}${NERD_FONT} Nerd Font Mono${NC} ← icons will be small"
+    echo ""
+    echo -e " Where to change:"
+    echo -e "   iTerm2     → Preferences → Profiles → Text → Font"
+    echo -e "   Alacritty  → ~/.config/alacritty/alacritty.toml"
+    echo -e "   Kitty      → ~/.config/kitty/kitty.conf (font_family)"
+    echo -e "   WezTerm    → ~/.config/wezterm/wezterm.lua"
+    echo -e "   GNOME Term → Preferences → Profile → Custom font"
+    echo -e "   Ghostty    → ~/.config/ghostty/config (font-family)"
+    echo ""
+}
+
+# ============================================================
+# System packages
 # ============================================================
 install_system_packages() {
     section "System packages"
@@ -279,7 +308,57 @@ install_system_packages() {
 }
 
 # ============================================================
-#  Neovim
+# Clipboard tool (required by Neovim — :help clipboard-tool)
+# ============================================================
+install_clipboard_tool() {
+    section "Clipboard tool"
+
+    # macOS has pbcopy built-in
+    if [[ "$OS" == "macos" ]]; then
+        if has pbcopy; then
+            ok "pbcopy — built-in (macOS)"
+            return 0
+        fi
+    fi
+
+    # Linux: check for existing clipboard tools
+    if has xclip || has xsel || has wl-copy; then
+        local tool=""
+        has xclip   && tool="xclip"
+        has xsel    && tool="xsel"
+        has wl-copy && tool="wl-copy (wl-clipboard)"
+        ok "${tool} — already installed"
+        return 0
+    fi
+
+    # Detect display server to choose the right tool
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        info "Wayland detected — installing wl-clipboard..."
+        case "$PKG" in
+            apt)    sudo apt-get install -y wl-clipboard ;;
+            dnf)    sudo dnf install -y wl-clipboard ;;
+            yum)    sudo yum install -y wl-clipboard ;;
+            pacman) sudo pacman -S --needed --noconfirm wl-clipboard ;;
+            zypper) sudo zypper install -y wl-clipboard ;;
+            apk)    sudo apk add wl-clipboard ;;
+        esac
+        has wl-copy && ok "wl-clipboard" || warn "Failed to install wl-clipboard"
+    else
+        info "X11 / unknown display — installing xclip..."
+        case "$PKG" in
+            apt)    sudo apt-get install -y xclip ;;
+            dnf)    sudo dnf install -y xclip ;;
+            yum)    sudo yum install -y xclip ;;
+            pacman) sudo pacman -S --needed --noconfirm xclip ;;
+            zypper) sudo zypper install -y xclip ;;
+            apk)    sudo apk add xclip ;;
+        esac
+        has xclip && ok "xclip" || warn "Failed to install xclip"
+    fi
+}
+
+# ============================================================
+# Neovim
 # ============================================================
 install_neovim() {
     section "Neovim"
@@ -358,7 +437,7 @@ install_neovim_github() {
 }
 
 # ============================================================
-#  Nerd Font
+# Nerd Font
 # ============================================================
 install_nerd_font() {
     section "Nerd Font (${NERD_FONT})"
@@ -395,23 +474,8 @@ install_nerd_font() {
     nerd_font_hint
 }
 
-nerd_font_hint() {
-    echo ""
-    echo -e "  ${YELLOW}${BOLD}⚠  Set your terminal font manually:${NC}"
-    echo -e "     ${GREEN}${NERD_FONT} Nerd Font${NC}            ← correct (full-size icons)"
-    echo -e "     ${RED}${NERD_FONT} Nerd Font Mono${NC}       ← icons will be small"
-    echo ""
-    echo -e "  Where to change:"
-    echo -e "    iTerm2       → Preferences → Profiles → Text → Font"
-    echo -e "    Alacritty    → ~/.config/alacritty/alacritty.toml"
-    echo -e "    Kitty        → ~/.config/kitty/kitty.conf   (font_family)"
-    echo -e "    WezTerm      → ~/.config/wezterm/wezterm.lua"
-    echo -e "    GNOME Term   → Preferences → Profile → Custom font"
-    echo ""
-}
-
 # ============================================================
-#  Node.js + npm
+# Node.js + npm
 # ============================================================
 ensure_node() {
     if has node && has npm; then return 0; fi
@@ -434,7 +498,7 @@ ensure_node() {
 }
 
 # ============================================================
-#  npm packages
+# npm packages
 # ============================================================
 install_npm_packages() {
     [[ ${#NPM_PACKAGES[@]} -eq 0 ]] && return 0
@@ -456,7 +520,7 @@ install_npm_packages() {
 }
 
 # ============================================================
-#  Python + pip (PEP 668 / Arch safe)
+# Python + pip (PEP 668 / Arch safe)
 # ============================================================
 ensure_python() {
     if has python3; then return 0; fi
@@ -528,7 +592,7 @@ install_pip_packages() {
 }
 
 # ============================================================
-#  Neovim Python provider (global plugin — works for ALL configs)
+# Neovim Python provider (global plugin — works for ALL configs)
 # ============================================================
 configure_nvim_python() {
     local venv_python="${VENV_DIR}/bin/python3"
@@ -554,9 +618,9 @@ configure_nvim_python() {
     mkdir -p "$plugin_dir"
 
     cat > "$plugin_file" << EOF
--- Auto-generated by install.sh
+-- Auto-generated by preinstall.sh
 -- Points Neovim Python 3 provider to the venv with pynvim.
--- Applies to ALL Neovim configs (NvChad, LazyVim, kickstart, custom, etc.)
+-- Applies to ALL Neovim configs (NvChad, LazyVim, AstroNvim, kickstart, custom, etc.)
 -- Any config can override by setting vim.g.python3_host_prog itself.
 -- To undo: delete this file.
 if not vim.g.python3_host_prog then
@@ -570,12 +634,151 @@ EOF
 }
 
 # ============================================================
-#  Verification
+# Optional AstroNvim tools (lazygit, gdu, bottom)
+# ============================================================
+install_optional_packages() {
+    section "Optional tools (AstroNvim recommended)"
+
+    # lazygit
+    if has lazygit; then
+        ok "lazygit — already installed"
+    else
+        info "Installing lazygit..."
+        case "$PKG" in
+            brew)   brew install lazygit ;;
+            pacman) sudo pacman -S --needed --noconfirm lazygit ;;
+            dnf)    sudo dnf copr enable -y atim/lazygit 2>/dev/null || true
+                    sudo dnf install -y lazygit ;;
+            apt)
+                # lazygit is not in default apt repos; use GitHub release
+                install_lazygit_github
+                ;;
+            *)
+                install_lazygit_github
+                ;;
+        esac
+        has lazygit && ok "lazygit" || warn "Failed to install lazygit (optional)"
+    fi
+
+    # gdu
+    if has gdu; then
+        ok "gdu — already installed"
+    else
+        info "Installing gdu..."
+        case "$PKG" in
+            brew)   brew install gdu ;;
+            pacman) sudo pacman -S --needed --noconfirm gdu ;;
+            apt)
+                # Try apt first (available in some repos), fall back to GitHub
+                if sudo apt-get install -y gdu 2>/dev/null; then
+                    ok "gdu"
+                else
+                    install_gdu_github
+                fi
+                ;;
+            dnf)    sudo dnf install -y gdu 2>/dev/null || install_gdu_github ;;
+            *)      install_gdu_github ;;
+        esac
+        has gdu && ok "gdu" || warn "Failed to install gdu (optional)"
+    fi
+
+    # bottom
+    if has btm; then
+        ok "bottom — already installed"
+    else
+        info "Installing bottom..."
+        case "$PKG" in
+            brew)   brew install bottom ;;
+            pacman) sudo pacman -S --needed --noconfirm bottom ;;
+            dnf)    sudo dnf copr enable -y atim/bottom 2>/dev/null || true
+                    sudo dnf install -y bottom ;;
+            apt)    install_bottom_github ;;
+            *)      install_bottom_github ;;
+        esac
+        has btm && ok "bottom" || warn "Failed to install bottom (optional)"
+    fi
+}
+
+install_lazygit_github() {
+    local arch
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64)  arch="x86_64" ;;
+        aarch64) arch="arm64" ;;
+        *) warn "No prebuilt lazygit for ${arch}"; return 1 ;;
+    esac
+
+    local tag
+    tag="$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest \
+           | grep '"tag_name"' | head -1 | cut -d'"' -f4)"
+    local version="${tag#v}"
+
+    local url="https://github.com/jesseduffield/lazygit/releases/download/${tag}/lazygit_${version}_Linux_${arch}.tar.gz"
+    local tmp
+    tmp="$(mktemp -d)"
+
+    info "Downloading lazygit ${tag}..."
+    curl -fsSL "$url" -o "${tmp}/lazygit.tar.gz"
+    tar -xzf "${tmp}/lazygit.tar.gz" -C "${tmp}"
+    sudo install "${tmp}/lazygit" /usr/local/bin/lazygit
+    rm -rf "$tmp"
+}
+
+install_gdu_github() {
+    local arch
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64)  arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+        *) warn "No prebuilt gdu for ${arch}"; return 1 ;;
+    esac
+
+    local tag
+    tag="$(curl -fsSL https://api.github.com/repos/dundee/gdu/releases/latest \
+           | grep '"tag_name"' | head -1 | cut -d'"' -f4)"
+
+    local url="https://github.com/dundee/gdu/releases/download/${tag}/gdu_linux_${arch}.tgz"
+    local tmp
+    tmp="$(mktemp -d)"
+
+    info "Downloading gdu ${tag}..."
+    curl -fsSL "$url" -o "${tmp}/gdu.tgz"
+    tar -xzf "${tmp}/gdu.tgz" -C "${tmp}"
+    sudo install "${tmp}/gdu_linux_${arch}" /usr/local/bin/gdu
+    rm -rf "$tmp"
+}
+
+install_bottom_github() {
+    local arch
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64)  arch="x86_64" ;;
+        aarch64) arch="aarch64" ;;
+        *) warn "No prebuilt bottom for ${arch}"; return 1 ;;
+    esac
+
+    local tag
+    tag="$(curl -fsSL https://api.github.com/repos/ClementTsang/bottom/releases/latest \
+           | grep '"tag_name"' | head -1 | cut -d'"' -f4)"
+
+    local url="https://github.com/ClementTsang/bottom/releases/download/${tag}/bottom_${arch}-unknown-linux-gnu.tar.gz"
+    local tmp
+    tmp="$(mktemp -d)"
+
+    info "Downloading bottom ${tag}..."
+    curl -fsSL "$url" -o "${tmp}/bottom.tar.gz"
+    tar -xzf "${tmp}/bottom.tar.gz" -C "${tmp}"
+    sudo install "${tmp}/btm" /usr/local/bin/btm
+    rm -rf "$tmp"
+}
+
+# ============================================================
+# Verification
 # ============================================================
 verify() {
     section "Verification"
 
-    local cmds=(nvim git node npm rg python3 tree-sitter)
+    local cmds=(nvim git node npm rg fd tree-sitter python3 lazygit gdu btm)
     local all_ok=true
 
     for cmd in "${cmds[@]}"; do
@@ -587,15 +790,48 @@ verify() {
                 node)        ver="node $(node --version 2>/dev/null)" ;;
                 npm)         ver="npm $(npm --version 2>/dev/null)" ;;
                 rg)          ver="$(rg --version | head -1)" ;;
+                fd)          ver="$(fd --version 2>/dev/null || echo 'installed')" ;;
                 python3)     ver="$(python3 --version)" ;;
                 tree-sitter) ver="$(tree-sitter --version 2>/dev/null || echo 'installed')" ;;
+                lazygit)     ver="$(lazygit --version 2>/dev/null | head -1 || echo 'installed')" ;;
+                gdu)         ver="$(gdu --version 2>/dev/null | head -1 || echo 'installed')" ;;
+                btm)         ver="$(btm --version 2>/dev/null || echo 'installed')" ;;
             esac
             ok "✓ ${cmd}: ${ver}"
         else
-            warn "✗ ${cmd}: not found"
-            all_ok=false
+            # Mark required tools as errors, optional as warnings
+            case "$cmd" in
+                nvim|git|node|npm|rg|tree-sitter|python3)
+                    warn "✗ ${cmd}: not found"
+                    all_ok=false
+                    ;;
+                *)
+                    warn "✗ ${cmd}: not found (optional)"
+                    ;;
+            esac
         fi
     done
+
+    # Check clipboard
+    if [[ "$OS" == "macos" ]]; then
+        if has pbcopy; then
+            ok "✓ clipboard: pbcopy (macOS built-in)"
+        else
+            warn "✗ clipboard: no tool found"
+            all_ok=false
+        fi
+    else
+        if has xclip || has xsel || has wl-copy; then
+            local tool=""
+            has xclip   && tool="xclip"
+            has xsel    && tool="xsel"
+            has wl-copy && tool="wl-copy"
+            ok "✓ clipboard: ${tool}"
+        else
+            warn "✗ clipboard: no tool found (xclip/xsel/wl-clipboard)"
+            all_ok=false
+        fi
+    fi
 
     # Check font
     local font_dir
@@ -629,7 +865,7 @@ verify() {
 }
 
 # ============================================================
-#  Main
+# Main
 # ============================================================
 main() {
     echo ""
@@ -640,11 +876,13 @@ main() {
     pkg_update
 
     install_system_packages
+    install_clipboard_tool
     install_neovim
     install_nerd_font
     ensure_local_bin_in_path
     install_npm_packages
     install_pip_packages
+    install_optional_packages
 
     verify
 
