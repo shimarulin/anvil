@@ -14,3 +14,7 @@ Thumbs.db
 
 # Local overrides (user can create these for machine-specific config)
 src/*/lua/local_*.lua
+
+# Context files for LLM (may contain duplicate code)
+context/sources/*
+!context/sources/README.md
