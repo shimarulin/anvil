@@ -22,3 +22,6 @@ context/sources/*
 # Output directory for LLM responses (ignore everything except README.md)
 context/output/*
 !context/output/README.md
+
+# User configuration files
+config
