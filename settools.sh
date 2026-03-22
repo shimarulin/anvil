@@ -45,8 +45,8 @@ mkout() {
 
     # Add text from clipboard if available
     if [[ -n "$clipboard_content" ]]; then
-        echo "$clipboard_content" >> "$filename"
-        echo "📋 Text from clipboard added"
+        printf '%s' "$clipboard_content" >> "$filename"
+        echo "📋 Text from clipboard added (raw, no escape interpretation)"
     else
         echo "📁 File is empty (clipboard is empty or unavailable)" > "$filename"
     fi
